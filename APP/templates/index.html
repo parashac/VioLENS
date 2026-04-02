@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Violence Detection — CCTV Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Design tokens ─────────────────────────────────────────────────── */
+    :root {
+      --bg:         #0a0c10;
+      --surface:    #111520;
+      --border:     #1e2535;
+      --accent:     #00d4ff;
+      --danger:     #ff3b55;
+      --safe:       #00e57a;
+      --muted:      #4a5568;
+      --text:       #e2e8f0;
+      --mono:       'Share Tech Mono', monospace;
+      --sans:       'Syne', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* scan-line overlay */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,212,255,0.015) 2px,
+        rgba(0,212,255,0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10,12,16,0.85);
+      backdrop-filter: blur(8px);
+      position: sticky; top: 0; z-index: 100;
+    }
+    header .logo {
+      width: 38px; height: 38px;
+      border: 2px solid var(--accent);
+      border-radius: 6px;
+      display: grid; place-items: center;
+      color: var(--accent);
+      font-size: 18px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 800; letter-spacing: 0.06em; }
+    header h1 span { color: var(--accent); }
+    header .badge {
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 32px 24px;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    /* ── Card ────────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      font-family: var(--mono);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .card-header .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background 0.4s;
+    }
+    .card-header .dot.live { background: var(--safe); box-shadow: 0 0 6px var(--safe); }
+    .card-body { padding: 18px; }
+
+    /* ── Video panel ─────────────────────────────────────────────────────── */
+    .video-wrapper {
+      position: relative;
+      background: #000;
+      aspect-ratio: 16/9;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .video-wrapper img {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+    .video-wrapper img.active { display: block; }
+
+    /* Placeholder when no stream */
+    .video-placeholder {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+    .video-placeholder svg { opacity: 0.3; }
+    .video-placeholder.hidden { display: none; }
+
+    /* ── RTSP Form ───────────────────────────────────────────────────────── */
+    .input-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    input[type="text"] {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--muted); }
+
+    /* ── Buttons ─────────────────────────────────────────────────────────── */
+    .btn {
+      padding: 9px 18px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      transition: opacity 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--accent); color: #000; font-weight: 700; }
+    .btn-danger  { background: var(--danger); color: #fff; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── Webcam section
+         ┌──────────────────────────────────────────────────────────────────┐
+         │  TO DISABLE WEBCAM: comment out this entire block in HTML        │
+         │  AND comment out the /start_webcam, /stop_webcam routes in       │
+         │  app.py (they are clearly marked).                                │
+         └──────────────────────────────────────────────────────────────────┘
+    ── */
+    /* WEBCAM_SECTION_STYLES — comment these out to hide webcam styling */
+    .webcam-controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    /* END WEBCAM_SECTION_STYLES */
+
+    /* ── Sidebar / Results ───────────────────────────────────────────────── */
+    .sidebar { display: flex; flex-direction: column; gap: 18px; }
+
+    /* Status widget */
+    .status-widget {
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      text-align: center;
+      transition: border-color 0.4s;
+    }
+    .status-widget.violent  { border-color: var(--danger); }
+    .status-widget.safe     { border-color: var(--safe);   }
+
+    .status-label {
+      font-size: 1.8rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+    .status-label.violent { color: var(--danger); }
+    .status-label.safe    { color: var(--safe);   }
+    .status-label.neutral { color: var(--muted);  }
+
+    .status-confidence {
+      font-family: var(--mono);
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+
+    /* Probability bars */
+    .prob-bars { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+    .prob-row { display: flex; flex-direction: column; gap: 4px; }
+    .prob-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      color: var(--muted);
+    }
+    .prob-track {
+      height: 6px;
+      background: var(--bg);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .prob-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+    .prob-fill.danger { background: var(--danger); }
+    .prob-fill.safe   { background: var(--safe);   }
+
+    /* Log */
+    .log {
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      max-height: 200px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .log-entry {
+      padding: 5px 8px;
+      border-radius: 4px;
+      background: var(--bg);
+      border-left: 3px solid var(--muted);
+      color: var(--muted);
+      animation: fadeIn 0.3s ease;
+    }
+    .log-entry.violent { border-color: var(--danger); color: var(--danger); }
+    .log-entry.safe    { border-color: var(--safe);   color: var(--safe);   }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ── Alerts ──────────────────────────────────────────────────────────── */
+    .alert-bar {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      max-width: 340px;
+      background: var(--danger);
+      color: #fff;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      padding: 12px 18px;
+      border-radius: 8px;
+      box-shadow: 0 0 30px rgba(255,59,85,0.5);
+      display: none;
+      z-index: 9998;
+      animation: pulse 1s infinite alternate;
+    }
+    @keyframes pulse {
+      from { box-shadow: 0 0 20px rgba(255,59,85,0.4); }
+      to   { box-shadow: 0 0 40px rgba(255,59,85,0.9); }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ── Header ────────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">⬡</div>
+    <h1>CCTV <span>Violence</span> Detection</h1>
+    <div class="badge" id="modelBadge">MODEL: best_model.h5 · 30 FRAMES · 224×224</div>
+  </header>
+
+  <!-- ── Alert bar (flashes on violence detected) ─────────────────────────── -->
+  <div class="alert-bar" id="alertBar">⚠ VIOLENCE DETECTED</div>
+
+  <!-- ── Main layout ───────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- Left column: video feeds -->
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+
+      <!-- ── RTSP Feed Card ─────────────────────────────────────────────── -->
+      <div class="card">
+        <div class="card-header">
+          <span class="dot" id="rtspDot"></span>
+          RTSP / IP CAMERA
+        </div>
+        <div class="card-body">
+
+          <div class="video-wrapper">
+            <!-- The <img> tag receives the MJPEG stream from Flask -->
+            <img id="rtspFeed" alt="RTSP stream" />
+            <div class="video-placeholder" id="rtspPlaceholder">
+              <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14m0-4v4m0-4H5a2 2 0 00-2 2v4a2 2 0 002 2h10V10z"/>
+              </svg>
+              No stream active
+            </div>
+          </div>
+
+          <!-- RTSP URL input + controls -->
+          <div class="input-row">
+            <input type="text"
+                   id="rtspInput"
+                   placeholder="rtsp://user:pass@192.168.1.100:554/stream"
+                   value="" />
+            <button class="btn btn-primary" onclick="startRTSP()">CONNECT</button>
+            <button class="btn btn-danger"  onclick="stopRTSP()"  id="rtspStopBtn" disabled>STOP</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ─────────────────────────────────────────────────────────────────────
+           WEBCAM SECTION
+           To DISABLE the webcam:
+             • In app.py  : comment out the /start_webcam and /stop_webcam routes
+             • Here       : comment out the entire block between the two WEBCAM
+                            SECTION markers below
+           ─────────────────────────────────────────────────────────────────── -->
+
+      <!-- WEBCAM SECTION START -->
+      <div class="card">
+        <div class="card-header">
+          <span class="dot" id="webcamDot"></span>
+          WEBCAM (LOCAL)
+        </div>
+        <div class="card-body">
+
+          <div class="video-wrapper">
+            <img id="webcamFeed" alt="Webcam stream" />
+            <div class="video-placeholder" id="webcamPlaceholder">
+              <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14m0-4v4m0-4H5a2 2 0 00-2 2v4a2 2 0 002 2h10V10z"/>
+              </svg>
+              Webcam not started
+            </div>
+          </div>
+
+          <div class="webcam-controls">
+            <button class="btn btn-secondary" onclick="startWebcam()" id="webcamStartBtn">START WEBCAM</button>
+            <button class="btn btn-danger"    onclick="stopWebcam()"  id="webcamStopBtn" disabled>STOP</button>
+          </div>
+
+        </div>
+      </div>
+      <!-- WEBCAM SECTION END -->
+
+    </div><!-- /left column -->
+
+    <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
+    <div class="sidebar">
+
+      <!-- Live result widget (shows last inference from whichever source fired) -->
+      <div class="status-widget neutral" id="statusWidget">
+        <div class="status-label neutral" id="statusLabel">WAITING</div>
+        <div class="status-confidence" id="statusConf">—</div>
+
+        <div class="prob-bars">
+          <!-- Non-Violent bar -->
+          <div class="prob-row">
+            <div class="prob-label-row">
+              <span>Non-Violent</span>
+              <span id="probNonViolent">—</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill safe" id="barNonViolent" style="width:0%"></div>
+            </div>
+          </div>
+
+          <!-- Violent bar -->
+          <div class="prob-row">
+            <div class="prob-label-row">
+              <span>Violent</span>
+              <span id="probViolent">—</span>
+            </div>
+            <div class="prob-track">
+              <div class="prob-fill danger" id="barViolent" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detection log -->
+      <div class="card">
+        <div class="card-header">
+          <span class="dot live"></span>
+          DETECTION LOG
+        </div>
+        <div class="card-body">
+          <div class="log" id="logPanel">
+            <div class="log-entry">System ready. No stream active.</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+
+  </main><!-- /main -->
+
+  <!-- ── JavaScript ─────────────────────────────────────────────────────────── -->
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    let activeSource   = null;   // 'rtsp_0' | 'webcam' | null
+    let pollInterval   = null;   // setInterval handle for /result polling
+    let lastLabel      = null;   // to avoid duplicate log entries
+
+    // ── RTSP controls ─────────────────────────────────────────────────────────
+    async function startRTSP() {
+      const url = document.getElementById('rtspInput').value.trim();
+      if (!url) { alert('Please enter an RTSP URL.'); return; }
+
+      const res  = await fetch('/start_rtsp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rtsp_url: url })
+      });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+
+      // Point the <img> at the MJPEG stream endpoint
+      const feed = document.getElementById('rtspFeed');
+      feed.src   = '/video_feed/rtsp_0';
+      feed.classList.add('active');
+      document.getElementById('rtspPlaceholder').classList.add('hidden');
+      document.getElementById('rtspDot').classList.add('live');
+      document.getElementById('rtspStopBtn').disabled = false;
+
+      setActiveSource('rtsp_0');
+      addLog('Connected to RTSP stream', 'neutral');
+    }
+
+    async function stopRTSP() {
+      await fetch('/stop_rtsp', { method: 'POST' });
+
+      const feed = document.getElementById('rtspFeed');
+      feed.src   = '';
+      feed.classList.remove('active');
+      document.getElementById('rtspPlaceholder').classList.remove('hidden');
+      document.getElementById('rtspDot').classList.remove('live');
+      document.getElementById('rtspStopBtn').disabled = true;
+
+      if (activeSource === 'rtsp_0') clearActiveSource();
+      addLog('RTSP stream stopped', 'neutral');
+    }
+
+    // ── Webcam controls ───────────────────────────────────────────────────────
+    //
+    // To DISABLE webcam from JavaScript as well:
+    //   Comment out startWebcam() and stopWebcam() below,
+    //   AND comment out the WEBCAM SECTION block in the HTML above,
+    //   AND comment out the webcam routes in app.py.
+    //
+    async function startWebcam() {
+      const res  = await fetch('/start_webcam', { method: 'POST' });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+
+      const feed = document.getElementById('webcamFeed');
+      feed.src   = '/video_feed/webcam';
+      feed.classList.add('active');
+      document.getElementById('webcamPlaceholder').classList.add('hidden');
+      document.getElementById('webcamDot').classList.add('live');
+      document.getElementById('webcamStartBtn').disabled = true;
+      document.getElementById('webcamStopBtn').disabled  = false;
+
+      setActiveSource('webcam');
+      addLog('Webcam started', 'neutral');
+    }
+
+    async function stopWebcam() {
+      await fetch('/stop_webcam', { method: 'POST' });
+
+      const feed = document.getElementById('webcamFeed');
+      feed.src   = '';
+      feed.classList.remove('active');
+      document.getElementById('webcamPlaceholder').classList.remove('hidden');
+      document.getElementById('webcamDot').classList.remove('live');
+      document.getElementById('webcamStartBtn').disabled = false;
+      document.getElementById('webcamStopBtn').disabled  = true;
+
+      if (activeSource === 'webcam') clearActiveSource();
+      addLog('Webcam stopped', 'neutral');
+    }
+    // END WEBCAM JS
+
+    // ── Source management & polling ────────────────────────────────────────────
+    function setActiveSource(sourceId) {
+      activeSource = sourceId;
+      if (pollInterval) clearInterval(pollInterval);
+      // Poll /result/<sourceId> every 800 ms for fresh inference results
+      pollInterval = setInterval(() => pollResult(sourceId), 800);
+    }
+
+    function clearActiveSource() {
+      activeSource = null;
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = null;
+      resetStatusWidget();
+    }
+
+    async function pollResult(sourceId) {
+      try {
+        const res  = await fetch(`/result/${sourceId}`);
+        const data = await res.json();
+        if (data.label) updateStatusWidget(data);
+      } catch (_) { /* network hiccup, ignore */ }
+    }
+
+    // ── Status widget update ──────────────────────────────────────────────────
+    function updateStatusWidget(data) {
+      const widget = document.getElementById('statusWidget');
+      const label  = document.getElementById('statusLabel');
+      const conf   = document.getElementById('statusConf');
+
+      const isViolent = (data.label === 'Violent');
+      const isSafe    = (data.label === 'Non-Violent');
+
+      // Widget border + label colour
+      widget.className = `status-widget ${isViolent ? 'violent' : isSafe ? 'safe' : 'neutral'}`;
+      label.className  = `status-label  ${isViolent ? 'violent' : isSafe ? 'safe' : 'neutral'}`;
+      label.textContent = data.label.toUpperCase();
+      conf.textContent  = `Confidence: ${data.confidence}%`;
+
+      // Probability bars
+      document.getElementById('probNonViolent').textContent = `${data.nonviolent_prob}%`;
+      document.getElementById('probViolent').textContent    = `${data.violent_prob}%`;
+      document.getElementById('barNonViolent').style.width  = `${data.nonviolent_prob}%`;
+      document.getElementById('barViolent').style.width     = `${data.violent_prob}%`;
+
+      // Log only on label change
+      if (data.label !== lastLabel) {
+        lastLabel = data.label;
+        addLog(`${data.label} — ${data.confidence}%`, isViolent ? 'violent' : 'safe');
+      }
+
+      // Flash alert bar on violence
+      const alertBar = document.getElementById('alertBar');
+      alertBar.style.display = isViolent ? 'block' : 'none';
+    }
+
+    function resetStatusWidget() {
+      document.getElementById('statusWidget').className = 'status-widget neutral';
+      document.getElementById('statusLabel').className  = 'status-label neutral';
+      document.getElementById('statusLabel').textContent = 'WAITING';
+      document.getElementById('statusConf').textContent  = '—';
+      document.getElementById('probNonViolent').textContent = '—';
+      document.getElementById('probViolent').textContent    = '—';
+      document.getElementById('barNonViolent').style.width  = '0%';
+      document.getElementById('barViolent').style.width     = '0%';
+      document.getElementById('alertBar').style.display = 'none';
+    }
+
+    // ── Log helper ────────────────────────────────────────────────────────────
+    function addLog(message, type = 'neutral') {
+      const log   = document.getElementById('logPanel');
+      const now   = new Date().toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className  = `log-entry ${type}`;
+      entry.textContent = `[${now}] ${message}`;
+      log.prepend(entry);   // newest on top
+      // Keep at most 60 entries
+      while (log.children.length > 60) log.removeChild(log.lastChild);
+    }
+  </script>
+
+</body>
+</html>

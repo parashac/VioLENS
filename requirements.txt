@@ -1,0 +1,6 @@
+Flask==3.0.3
+tensorflow==2.15.0
+opencv-python==4.9.0.80
+numpy==1.26.4
+twilio==9.0.4
+tensorflow==2.13.0
